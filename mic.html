@@ -284,8 +284,6 @@ async function processAudio() {
     setStatus('🤖 文字起こし中…');
  
     const result = await whisperPipeline(float32, {
-      language: 'english',
-      task: 'transcribe',
       chunk_length_s: 30,
       stride_length_s: 5,
     });
