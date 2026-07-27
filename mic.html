@@ -202,6 +202,40 @@
       document.getElementById('textDisplay').textContent = '（テキストが渡されていません）';
     }
 
+    // 同一の単語や短いフレーズ(1〜4語)が3回以上連続している場合、
+    // Whisperの繰り返しハルシネーションとみなして1回分に圧縮する。
+    function collapseRepeatedPhrases(text) {
+      if (!text) return text;
+      const words = text.split(/\s+/);
+      for (let phraseLen = 1; phraseLen <= 4; phraseLen++) {
+        const result = [];
+        let i = 0;
+        while (i < words.length) {
+          const phrase = words.slice(i, i + phraseLen).join(' ').toLowerCase();
+          let repeatCount = 1;
+          let j = i + phraseLen;
+          while (
+            j + phraseLen <= words.length &&
+            words.slice(j, j + phraseLen).join(' ').toLowerCase() === phrase &&
+            phrase.length > 0
+          ) {
+            repeatCount++;
+            j += phraseLen;
+          }
+          if (repeatCount >= 3) {
+            result.push(...words.slice(i, i + phraseLen));
+            i = j;
+          } else {
+            result.push(words[i]);
+            i++;
+          }
+        }
+        words.length = 0;
+        words.push(...result);
+      }
+      return words.join(' ');
+    }
+
     function setStatus(msg) {
       document.getElementById('status').innerHTML = msg;
     }
@@ -361,15 +395,30 @@
           float32 = decoded.getChannelData(0);
         }
 
-        const duration = ((new Date() - recordingStart) / 1000) || 1;
+        // WPMの異常値対策: 処理待ち時間を含む壁時計時間ではなく、
+        // 実際に録音された音声データそのものの長さ(秒)を使う。
+        // PCの処理速度差の影響を受けず安定する。
+        const duration = decoded.duration || ((recordingStopTime && recordingStart)
+          ? (recordingStopTime - recordingStart) / 1000
+          : 1) || 1;
         setStatus('文字起こし中…');
 
         const result = await whisperPipeline(float32, {
           chunk_length_s: 30,
-          stride_length_s: 5
+          stride_length_s: 5,
+          // 同じ語句を繰り返し書き起こしてしまうWhisperの幻覚(ハルシネーション)対策。
+          // 無音・雑音区間で同一フレーズをループ生成するのを抑える。
+          no_repeat_ngram_size: 3,
+          repetition_penalty: 1.3,
+          condition_on_previous_text: false
         });
 
-        const transcript = (result.text || '').trim();
+        let transcript = (result.text || '').trim();
+
+        // 上記の対策をすり抜けた場合の保険として、
+        // 同じ単語(列)が3回以上連続する場合は1回にまとめる。
+        transcript = collapseRepeatedPhrases(transcript);
+
         setStatus(transcript ? ('認識結果: ' + transcript) : '（音声を認識できませんでした）');
 
         // 結果を親ウィンドウに送信
