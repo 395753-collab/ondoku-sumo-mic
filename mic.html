@@ -121,6 +121,7 @@
   <div class="card">
     <h1 id="pageTitle"></h1>
     <div class="sub">このタブで録音します。終わったら自動で元の画面に結果が送られます。</div>
+    <div class="sub" style="margin-top:-8px;">‿ は単語がつながって聞こえる場所（リンキング）の目安です</div>
 
     <div id="textDisplay">テキストを読み込んでいます…</div>
 
@@ -151,11 +152,11 @@
     document.getElementById('pageTitle').textContent = EMOJI_MIC + ' 音読大相撲 - マイク判定';
     document.getElementById('micBtn').textContent = EMOJI_MIC + ' はっけよい！';
 
-    // ★ 変更: tiny(39M)だと長文・対話文で無音区間をまたいだ箇所が
-    //   丸ごと書き起こされず抜け落ちることがあったため、
-    //   ひと回り大きく精度の高いbase(74M)モデルに変更した。
-    //   初回ダウンロード容量・時間は増えるが、認識精度が向上する見込み。
-    const MODEL_ID   = 'onnx-community/whisper-base.en';
+    // ★ 変更: base(74M)でも、長め・対話文で文単位の脱落が再発したため、
+    //   さらに精度の高いsmall(244M)モデルに変更した。
+    //   初回ダウンロード容量・時間はbaseよりさらに増える（数百MB程度）が、
+    //   認識精度がさらに向上する見込み。
+    const MODEL_ID   = 'onnx-community/whisper-small.en';
     const MODEL_TASK = 'automatic-speech-recognition';
 
     let whisperPipeline  = null;
@@ -179,24 +180,64 @@
     }
     const params = getParams();
 
+    // ★ 追加: リンキング（単語同士の連結発音）の目安表示
+    //   厳密な音声解析ではなく、スペル上の「子音で終わる単語＋母音で
+    //   始まる単語」「同じ子音の連続」という学校英語の基本ルールに基づく
+    //   簡易的な目安。採点には使わない（読む時の気づきを促す表示のみ）。
+    function cleanWordForLink(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+    const VOWEL_LETTERS = ['a','e','i','o','u'];
+    function isVowelLetter(ch)     { return VOWEL_LETTERS.indexOf(ch) !== -1; }
+    function isConsonantLetter(ch) { return /^[a-z]$/.test(ch) && !isVowelLetter(ch); }
+    function computeLinking(tokens) {
+      const linkAfter = new Array(tokens.length).fill(false);
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const t = tokens[i], nt = tokens[i + 1];
+        if (!t || !nt || t.isSkip || nt.isSkip) continue;
+        if (/[.!?,;:]/.test(t.display)) continue; // 区切りの句読点の後はリンキングさせない
+        const lastCh  = t.clean  ? t.clean[t.clean.length - 1]   : '';
+        const firstCh = nt.clean ? nt.clean[0]                    : '';
+        if (!lastCh || !firstCh) continue;
+        if (isConsonantLetter(lastCh) && isVowelLetter(firstCh)) linkAfter[i] = true;
+        else if (lastCh === firstCh && isConsonantLetter(lastCh)) linkAfter[i] = true;
+      }
+      return linkAfter;
+    }
+
     // テキストの表示
     function renderTargetText(rawText) {
       const el = document.getElementById('textDisplay');
       el.innerHTML = '';
       const regex = /<([^>]+)>|(\S+)/g;
       let m;
-      const frag = document.createDocumentFragment();
+      const tokens = [];
       while ((m = regex.exec(rawText)) !== null) {
-        const span = document.createElement('span');
         if (m[1]) {
-          span.textContent = m[1] + ' ';
+          tokens.push({ display: m[1], isProper: true, isSkip: false, clean: cleanWordForLink(m[1]) });
+        } else {
+          const clean = cleanWordForLink(m[2]);
+          tokens.push({ display: m[2], isProper: false, isSkip: (clean.length === 0), clean: clean });
+        }
+      }
+      const linkAfter = computeLinking(tokens);
+      const frag = document.createDocumentFragment();
+      tokens.forEach(function(t, i) {
+        const span = document.createElement('span');
+        span.textContent = t.display + ' ';
+        if (t.isProper) {
           span.style.color = '#1a5276';
           span.style.fontStyle = 'italic';
-        } else {
-          span.textContent = m[2] + ' ';
         }
         frag.appendChild(span);
-      }
+        if (linkAfter[i]) {
+          const mark = document.createElement('span');
+          mark.textContent = '\u203F';
+          mark.style.color = '#c9a227';
+          mark.style.fontWeight = '700';
+          frag.appendChild(mark);
+        }
+      });
       el.appendChild(frag);
     }
 
@@ -261,7 +302,7 @@
     // Whisperモデルの読み込み
     async function preloadWhisper() {
       document.getElementById('modelBox').style.display = 'block';
-      setStatus('AIモデルを読み込んでいます…（初回は数十MB程度のダウンロードが発生します）');
+      setStatus('AIモデルを読み込んでいます…（初回は数百MB程度のダウンロードが発生します。教室のネット環境によっては少し時間がかかります）');
       try {
         whisperPipeline = await pipeline(MODEL_TASK, MODEL_ID, {
           progress_callback: (prog) => {
