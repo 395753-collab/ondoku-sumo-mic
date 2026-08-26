@@ -152,11 +152,11 @@
     document.getElementById('pageTitle').textContent = EMOJI_MIC + ' 音読大相撲 - マイク判定';
     document.getElementById('micBtn').textContent = EMOJI_MIC + ' はっけよい！';
 
-    // ★ 変更: tiny(39M)だと長文・対話文で無音区間をまたいだ箇所が
-    //   丸ごと書き起こされず抜け落ちることがあったため、
-    //   ひと回り大きく精度の高いbase(74M)モデルに変更した。
-    //   初回ダウンロード容量・時間は増えるが、認識精度が向上する見込み。
-    const MODEL_ID   = 'onnx-community/whisper-base.en';
+    // ★ 変更: base(74M)でも、長め・対話文で文単位の脱落が再発したため、
+    //   さらに精度の高いsmall(244M)モデルに変更した。
+    //   初回ダウンロード容量・時間はbaseよりさらに増える（数百MB程度）が、
+    //   認識精度がさらに向上する見込み。
+    const MODEL_ID   = 'onnx-community/whisper-small.en';
     const MODEL_TASK = 'automatic-speech-recognition';
 
     let whisperPipeline  = null;
@@ -302,7 +302,7 @@
     // Whisperモデルの読み込み
     async function preloadWhisper() {
       document.getElementById('modelBox').style.display = 'block';
-      setStatus('AIモデルを読み込んでいます…（初回は数十MB程度のダウンロードが発生します）');
+      setStatus('AIモデルを読み込んでいます…（初回は数百MB程度のダウンロードが発生します。教室のネット環境によっては少し時間がかかります）');
       try {
         whisperPipeline = await pipeline(MODEL_TASK, MODEL_ID, {
           progress_callback: (prog) => {
